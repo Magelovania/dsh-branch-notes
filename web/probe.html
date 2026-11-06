@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>枝条笔记 · 自检</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 20px 22px 40px; font: 14px/1.7 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #F6F2EC; color: #2E2A28; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { color: #8A8078; font-size: 12px; margin-bottom: 16px; }
+  section { background: #fff; border: 1px solid #E7E0D8; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  h2 { font-size: 13px; margin: 0 0 8px; color: #6B6158; letter-spacing: .02em; }
+  button { font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 7px; border: 1px solid #DCD3C8; background: #fff; cursor: pointer; }
+  button:hover { background: #F3EDE4; }
+  pre { margin: 8px 0 0; padding: 8px 10px; background: #FBF8F3; border: 1px solid #EFE9E0; border-radius: 8px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; }
+  .ok { color: #2F7D4F; } .bad { color: #B23B3B; }
+</style>
+</head>
+<body>
+<h1>枝条笔记 · 宿主自检</h1>
+<div class="sub">这个页面由 dsh-branch-notes 的宿主半提供，用来验证「iframe → 同源 API → Harness 内置模型」这条链路。</div>
+
+<section>
+  <h2>1. 环境</h2>
+  <pre id="env">…</pre>
+</section>
+
+<section>
+  <h2>2. 路由 <button id="runRoutes">重新检测</button></h2>
+  <pre id="routes">…</pre>
+</section>
+
+<section>
+  <h2>3. 模型调用 <button id="runSummarize">非流式（summarize）</button> <button id="runChat">流式（chat）</button></h2>
+  <pre id="llm">点上面的按钮开始</pre>
+</section>
+
+<script>
+const BASE = '/api/dsh-branch-notes';
+const $ = (id) => document.getElementById(id);
+function log(payload) {
+  try {
+    fetch(BASE + '/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (e) {}
+}
+function show(el, text, cls) {
+  el.textContent = text;
+  el.className = cls || '';
+}
+window.addEventListener('error', (e) => log({ type: 'probe-error', message: String(e.message), source: String(e.filename), line: e.lineno }));
+
+async function getJson(path, init) {
+  const r = await fetch(BASE + path, init);
+  const text = await r.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch (e) {}
+  return { status: r.status, json, text };
+}
+
+$('env').textContent = JSON.stringify({
+  origin: location.origin,
+  href: location.href,
+  hasParent: window.parent !== window,
+  ua: navigator.userAgent.slice(0, 120),
+}, null, 2);
+log({ type: 'probe-boot', origin: location.origin, hasParent: window.parent !== window });
+
+$('runRoutes').onclick = async () => {
+  const out = [];
+  try {
+    const ping = await getJson('/ping');
+    out.push('ping → ' + ping.status + ' ' + ping.text);
+    const diag = await getJson('/diag');
+    out.push('diag → ' + diag.status + ' ' + (diag.json ? JSON.stringify(diag.json.llm) : diag.text.slice(0, 300)));
+    const models = await getJson('/models');
+    out.push('models → ' + models.status + ' ' + models.text.slice(0, 600));
+  } catch (e) {
+    out.push('失败：' + String(e && e.message || e));
+  }
+  show($('routes'), out.join('\n\n'));
+  log({ type: 'probe-routes', out });
+};
+
+$('runSummarize').onclick = async () => {
+  show($('llm'), '调用中…');
+  const t0 = Date.now();
+  try {
+    const r = await getJson('/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        maxTokens: 160,
+        messages: [
+          { role: 'system', content: '你是剧本编辑。用一句中文（20–40 字）概括下面片段。只输出这一句。' },
+          { role: 'user', content: '标题：地下室的门\n正文：调查员在酒窖地板下发现一道被钉死的活板门，钉子是从里面钉出来的。' },
+        ],
+      }),
+    });
+    const content = r.json && r.json.choices && r.json.choices[0] && r.json.choices[0].message
+      ? r.json.choices[0].message.content
+      : null;
+    show($('llm'), '状态 ' + r.status + '（' + (Date.now() - t0) + ' ms）\n' + (content ? '✓ ' + content : r.text.slice(0, 600)), content ? 'ok' : 'bad');
+    log({ type: 'probe-summarize', status: r.status, content, ms: Date.now() - t0 });
+  } catch (e) {
+    show($('llm'), '✗ ' + String(e && e.message || e), 'bad');
+    log({ type: 'probe-summarize-error', message: String(e && e.message || e) });
+  }
+};
+
+$('runChat').onclick = async () => {
+  show($('llm'), '流式调用中…');
+  const t0 = Date.now();
+  let full = '';
+  try {
+    const r = await fetch(BASE + '/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        temperature: 0.7,
+        messages: [
+          { role: 'system', content: '你是 COC 跑团剧本顾问，中文回答，简短。' },
+          { role: 'user', content: '给一个地窖场景加一句恐怖描写，20 字以内。' },
+        ],
+      }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        const s = line.trim();
+        if (!s.startsWith('data:')) continue;
+        const d = s.slice(5).trim();
+        if (!d || d === '[DONE]') continue;
+        try {
+          const j = JSON.parse(d);
+          const t = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
+          if (t) { full += t; show($('llm'), full + '\n\n…流式中（' + (Date.now() - t0) + ' ms）'); }
+          if (j.error) show($('llm'), '✗ ' + j.error.message, 'bad');
+        } catch (e) {}
+      }
+    }
+    show($('llm'), (full ? '✓ ' : '✗ ') + full + '\n\n（' + (Date.now() - t0) + ' ms）', full ? 'ok' : 'bad');
+    log({ type: 'probe-chat', content: full, ms: Date.now() - t0 });
+  } catch (e) {
+    show($('llm'), '✗ ' + String(e && e.message || e), 'bad');
+    log({ type: 'probe-chat-error', message: String(e && e.message || e) });
+  }
+};
+</script>
+</body>
+</html>

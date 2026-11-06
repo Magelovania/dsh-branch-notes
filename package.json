@@ -1,0 +1,78 @@
+{
+  "name": "dsh-branch-notes",
+  "version": "0.4.8",
+  "description": "枝条笔记：嵌在 DeepSeek Harness 里的剧本枝条笔记，AI 直接使用 Harness 内置模型（无需填写 API Key）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./client/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "web",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "notes",
+    "coc",
+    "branch-notes",
+    "trpg",
+    "screenwriting"
+  ],
+  "author": "Magelovania",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Magelovania/dsh-branch-notes.git"
+  },
+  "homepage": "https://github.com/Magelovania/dsh-branch-notes#readme",
+  "bugs": {
+    "url": "https://github.com/Magelovania/dsh-branch-notes/issues"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    },
+    "compatibility": {
+      "dsh": ">=0.2.0-rc.1 <0.3.0-0",
+      "dshReleases": {
+        "0.2.0-rc.1": "compatible",
+        "0.2.0-rc.2": "compatible"
+      },
+      "profiles": [
+        "web"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1 <5.0.0-0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  }
+}
