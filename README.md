@@ -10,12 +10,17 @@
 
 **方式一：插件市场（推荐，收录后可用）** — DSH 的「插件 → 发现」里搜「枝条笔记」，一键安装。
 
-**方式二：命令行（npm 或 GitHub）**
+**方式二：命令行（推荐用 Release 的 tarball，不依赖 npm 与 git）**
 
 ```powershell
-dsh plugin --profile desktop add dsh-branch-notes                  # 从 npm 装
-dsh plugin --profile desktop add github:Magelovania/dsh-branch-notes      # 直接从 GitHub 装
+# 这个 tarball 永远是最新版（版本号见右侧 Releases 页）
+dsh plugin --profile desktop add https://github.com/Magelovania/dsh-branch-notes/releases/download/v0.4.20/dsh-branch-notes-0.4.20.tgz
+
+# 或者直接从 GitHub 源码装（那台机器要能 git clone github.com）
+dsh plugin --profile desktop add github:Magelovania/dsh-branch-notes
 ```
+
+npm 上也有同名包（`dsh plugin --profile desktop add dsh-branch-notes`），但 npm 的发版节奏可能滞后；想装到最新就用上面的 tarball 地址。
 
 **方式三：本地源码（开发用）** — 见文末「本机开发」。
 
