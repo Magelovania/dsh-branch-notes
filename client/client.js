@@ -249,7 +249,13 @@ window.__ModuleLoader__.load({
         if (note) setTimeout(function () { gotoFrame(note); }, 480);
         else if (reload) setTimeout(function () {
           var frame = document.querySelector('iframe[data-bn-frame]');
-          if (frame) frame.src = appUrl();
+          if (!frame) return;
+          /* 主面板是 React 渲染的：直接改 src 会被 re-render 覆盖，优先让 iframe 自己 reload。
+             新版 app.html 还会自己轮询 /commands 自愈，这里只是把旧页面也救回来。 */
+          try {
+            if (frame.contentWindow) { frame.contentWindow.location.reload(); return; }
+          } catch (error) { /* 跨域时退回改 src */ }
+          frame.src = appUrl();
         }, 480);
       }
       window.__dshBranchNotesOpen = openFromCommand;
