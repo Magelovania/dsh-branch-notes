@@ -184,6 +184,33 @@ body.mode-trunk #zoomPill{display:none}
 /* 主干视图：卡片宽度 / 字号 / 缩放（设置里可调，Ctrl+滚轮缩放）；正文颜色加深，保证小字号也看得清 */
 #cols .card .body{font-size:var(--bn-fs,13.5px);color:#4A423B}
 #cols .card .ttl{font-size:calc(var(--bn-fs,13.5px) + 1.2px)}
+/* 缩得太小时：卡片只渲染标题（标题放大到看得清），正文/摘要/计数一律不显示 */
+body.cards-tiny #cols .card .body,
+body.cards-tiny #cols .card .summary-line,
+body.cards-tiny #cols .card .count,
+body.cards-tiny #cols .card .type-btn{display:none}
+body.cards-tiny #cols .card{padding:10px 12px}
+body.cards-tiny #cols .card .ttl{
+  font-size:calc(var(--bn-fs,13.5px) * 1.55);line-height:1.42;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+}
+/* 缩小时双击某条标题：这一张卡片恢复默认大小（字号 / 正文 / 摘要 / 类型 / 字数都回来） */
+body.cards-tiny #cols .card.card-expand{
+  padding:14px 16px;
+  box-shadow:0 8px 24px rgba(90,70,55,.18), 0 0 0 1px rgba(190,137,120,.5);
+}
+body.cards-tiny #cols .card.card-expand .ttl{
+  font-size:calc(var(--bn-fs-def,13.5px) + 1.2px);
+  -webkit-line-clamp:unset;display:block;overflow:visible;
+}
+body.cards-tiny #cols .card.card-expand .body{
+  display:block;font-size:var(--bn-fs-def,13.5px);max-height:none;
+  -webkit-line-clamp:unset;overflow:visible;
+}
+body.cards-tiny #cols .card.card-expand .summary-line{display:flex;white-space:normal}
+body.cards-tiny #cols .card.card-expand .summary-line .txt{white-space:normal}
+body.cards-tiny #cols .card.card-expand .type-btn{display:inline-block}
+body.cards-tiny #cols .card.card-expand .count{display:block}
 #cols textarea.ta.body-ta{font-size:var(--bn-fs,13.5px);color:#4A423B}
 /* 编辑态：文本域不许溢出卡片 */
 #cols textarea.ta,
@@ -208,6 +235,21 @@ body.dragmode .node.drag-src>.card{
 }
 body.dragmode .col-tail,body.dragmode .grp-empty{opacity:.35}
 body.dragmode .card.drop-into{box-shadow:0 0 0 2px rgba(124,141,181,.85),0 8px 24px rgba(80,60,50,.14)}
+body.dragmode .card.drop-before{box-shadow:0 -3px 0 0 #BE8978,0 8px 24px rgba(80,60,50,.12)}
+body.dragmode .card.drop-after{box-shadow:0 3px 0 0 #BE8978,0 8px 24px rgba(80,60,50,.12)}
+#cols .col{position:relative}
+/* 树状视图缩得很小时同样只留标题（放大标题抵消缩放） */
+body.canvas-tiny #stage .card .body,
+body.canvas-tiny #stage .card .summary-line,
+body.canvas-tiny #stage .card .count,
+body.canvas-tiny #stage .card .type-btn{display:none}
+body.canvas-tiny #stage .card{padding:11px 14px}
+body.canvas-tiny #stage .card .ttl{
+  font-size:19px;line-height:1.42;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+}
+#cols .drag-line{position:absolute;left:8px;right:8px;height:3px;border-radius:2px;background:#BE8978;
+  box-shadow:0 0 0 3px rgba(190,137,120,.16);z-index:6;pointer-events:none}
 body.dragmode .grp.drop-into{background:rgba(124,141,181,.10);outline:1px dashed rgba(124,141,181,.62);border-radius:12px}
 .drag-ghost{
   position:fixed;z-index:9999;pointer-events:none;max-width:320px;
@@ -812,6 +854,7 @@ const settings = Object.assign({
   trunkFont: 13.5,
   trunkZoom: 1,
   autosaveMin: 5,   /* 定时自动保存间隔（分钟），0 = 关闭；默认 5 分钟 */
+  expandPct: 100,   /* 双击「小标题」时放大到的默认大小（百分比） */
 }, JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{}'));
 // 迁移：旧版浏览器版把 API Key 存在 localStorage，这里直接抹掉，避免残留在客户端。
 if (settings.apiKey !== undefined || settings.apiBase !== undefined || settings.model !== undefined) {
@@ -831,6 +874,56 @@ function applyTrunkStyle() {
   const r = trunkStyleRules();
   document.documentElement.style.setProperty('--bn-colw', (r.w + 8) + 'px');
   document.documentElement.style.setProperty('--bn-fs', r.f + 'px');
+  /* 双击小标题时放大到的「默认大小」：按主干字号 × 设置里的百分比 */
+  const base = clamp(Number(settings.trunkFont) || 13.5, 11, 22);
+  const def = Math.round(base * expandPct() / 100 * 10) / 10;
+  document.documentElement.style.setProperty('--bn-fs-def', def + 'px');
+  /* 缩到正文实际字号 < 10.6px（约 78% 以下）就不渲染正文，只留放大的标题 */
+  const tiny = r.f < 10.6;
+  document.body.classList.toggle('cards-tiny', tiny);
+  if (!tiny) S.expandId = null;   /* 放大回正常大小后，单张卡片的展开状态自然失效 */
+}
+
+/* 当前是不是「只渲染标题」的缩小状态 */
+function tinyNow() {
+  return document.body.classList.contains('cards-tiny') || document.body.classList.contains('canvas-tiny');
+}
+function expandPct() { return clamp(Number(settings.expandPct) || 100, 60, 180); }
+
+/* 缩小状态下双击标题：把它放大到默认大小并（平滑）移到屏幕中央 */
+function expandCardInTiny(id) {
+  if (!id || !nodeOf(id)) return;
+  if (S.viewMode === 'trunk') {
+    if (S.expandId === id) {          /* 再双击一次收回小标题 */
+      S.expandId = null;
+      S.sel = id;
+      renderTree();
+      toast('已收回小标题');
+      return;
+    }
+    S.expandId = id;
+    S.sel = id;
+    S.centerColOnce = true;           /* 走「平滑居中」那条路径 */
+    renderTree();
+    toast('已放大到默认大小（再双击收回）');
+    return;
+  }
+  /* 树状视图：整幅视图放大到默认大小，再把这张卡居中 */
+  S.expandId = null;
+  S.sel = id;
+  S.view.k = clamp(expandPct() / 100, 0.25, 2);
+  applyTrunkStyle();
+  renderTree();
+  applyView();
+  const el = $(`.node[data-id="${id}"] > .card`);
+  if (el) {
+    const vr = $('#viewport').getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    S.view.x += (vr.left + vr.width / 2) - (r.left + r.width / 2);
+    S.view.y += (vr.top + vr.height * 0.45) - (r.top + r.height / 2);
+    applyView();
+  }
+  toast('已放大到 ' + Math.round(S.view.k * 100) + '%');
 }
 function setTrunkZoom(next) {
   settings.trunkZoom = Math.round(clamp(next, 0.6, 1.8) * 100) / 100;
@@ -1188,7 +1281,7 @@ function buildCard(n) {
     ta.className = 'ta ttl-ta';
     ta.placeholder = '给这一条起个名字…';
     main.appendChild(ta);
-    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
+    requestAnimationFrame(() => { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); });
   } else {
     const ttl = document.createElement('div');
     ttl.className = 'ttl';
@@ -1207,7 +1300,7 @@ function buildCard(n) {
     ta.placeholder = '写正文…（Markdown；Enter 保存，Shift+Enter 换行，双击进入专注写作）';
     bodyWrap.appendChild(ta);
     bodyWrap.style.webkitLineClamp = 'unset';
-    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
+    requestAnimationFrame(() => { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); });
   } else {
     bodyWrap.classList.add('preview-clip');
     bodyWrap.innerHTML = mdToHtml(n.content);
@@ -1262,6 +1355,7 @@ function buildCard(n) {
   cnt.textContent = chars ? chars + ' 字' : '';
   card.appendChild(cnt);
 
+  if (S.expandId === n.id) card.classList.add('card-expand');
   card.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     if (e.target.closest('.ta,.toggle,.type-btn,.addbtn')) return;
@@ -1283,6 +1377,7 @@ function buildCard(n) {
     const ta = e.target.closest('.ta');
     if (ta && ta.selectionStart !== ta.selectionEnd) return;    // 双击选词，不进编辑
     S.sel = n.id;
+    if (tinyNow()) { expandCardInTiny(n.id); return; }          // 缩小成标题时：双击 = 放大到默认大小并居中
     if (e.target.closest('.ttl')) { startEdit(n.id, 'title'); return; }   // 双击标题 = 改标题
     if (S.viewMode === 'trunk') { startEdit(n.id, 'content'); return; }    // 主干视图里双击正文 = 就地编辑（列很窄，不跳专注）
     enterFocus(n.id);                                          // 树状视图：双击卡片 / 正文 = 专注写作（压暗其他枝干）
@@ -1350,6 +1445,21 @@ function columnGroups(depth) {
   const groups = [];
   for (const p of nodesAtDepth(depth - 1)) groups.push({ parent: p, items: childrenOf(p.id) });
   return groups;
+}
+
+/* 整篇文档最深有几层（决定主干视图要画到第几列，防止「选中没分支的主干就只剩两列」） */
+function maxNodeDepth() {
+  const q = [];
+  for (const id of S.doc.rootIds) q.push({ id, d: 0 });
+  let max = 0, guard = 0;
+  while (q.length && guard++ < 20000) {
+    const cur = q.shift();
+    const n = nodeOf(cur.id);
+    if (!n) continue;
+    if (cur.d > max) max = cur.d;
+    for (const c of n.children) q.push({ id: c, d: cur.d + 1 });
+  }
+  return max;
 }
 
 /* 从某节点往下沿「第一根子枝」展开，用于默认全展开 */
@@ -1428,15 +1538,47 @@ function centerSelectedColumn() {
 
 /* 横向拖动列带 / Shift+滚轮左右平移 */
 /* ---------- 长按拖动：长按卡片 = 拎起它和它整棵子树，松手挂到目标卡片 / 那一列下 ---------- */
-const Drag = { pending: null, timer: 0, id: null, ghost: null, hit: null };
+const Drag = { pending: null, timer: 0, id: null, ghost: null, hit: null, line: null };
 let __dragBound = false;
 
-function dragSetTarget(hit) {
-  if (Drag.hit && Drag.hit.el) Drag.hit.el.classList.remove('drop-into');
-  Drag.hit = hit || null;
-  if (Drag.hit && Drag.hit.el) Drag.hit.el.classList.add('drop-into');
+/* 拖动时的插入线：画在目标卡片所在列里，表示「松手会插到这一行前面/后面」 */
+function dragLineShow(cardEl, pos) {
+  const col = cardEl.closest('.col');
+  if (!col) return;
+  let line = Drag.line;
+  if (!line || line.parentNode !== col) {
+    if (line && line.parentNode) line.parentNode.removeChild(line);
+    line = document.createElement('div');
+    line.className = 'drag-line';
+    col.appendChild(line);
+    Drag.line = line;
+  }
+  const cr = cardEl.getBoundingClientRect();
+  const kr = col.getBoundingClientRect();
+  const y = cr.top - kr.top + col.scrollTop + (pos === 'before' ? -4 : cr.height + 2);
+  line.style.top = Math.round(y) + 'px';
 }
 
+function dragLineHide() {
+  if (Drag.line && Drag.line.parentNode) Drag.line.parentNode.removeChild(Drag.line);
+  Drag.line = null;
+}
+
+function dragSetTarget(hit) {
+  if (Drag.hit && Drag.hit.el) Drag.hit.el.classList.remove('drop-into', 'drop-before', 'drop-after');
+  dragLineHide();
+  Drag.hit = hit || null;
+  if (!Drag.hit) return;
+  const h = Drag.hit;
+  if (h.kind === 'card' && (h.pos === 'before' || h.pos === 'after')) {
+    h.el.classList.add(h.pos === 'before' ? 'drop-before' : 'drop-after');
+    dragLineShow(h.el, h.pos);
+    return;
+  }
+  if (h.el) h.el.classList.add('drop-into');
+}
+
+/* 卡片上 30% 高度 = 插到它前面，下 30% = 插到它后面，中间 40% = 挂成它的子枝 */
 function dragHitTest(x, y) {
   const el = document.elementFromPoint(x, y);
   if (!el) return null;
@@ -1444,15 +1586,20 @@ function dragHitTest(x, y) {
   const card = el.closest('.card');
   if (card) {
     const node = card.closest('.node');
-    if (node && node.dataset.id) return { kind: 'card', id: node.dataset.id, el: card };
+    if (node && node.dataset.id) {
+      const r = card.getBoundingClientRect();
+      const rel = (y - r.top) / Math.max(1, r.height);
+      const pos = rel < 0.3 ? 'before' : (rel > 0.7 ? 'after' : 'into');
+      return { kind: 'card', id: node.dataset.id, el: card, pos };
+    }
   }
   const grp = el.closest('.grp');
   if (grp) {
     const pid = grp.dataset.parent || '';
-    return pid ? { kind: 'group', id: pid, el: grp } : { kind: 'root', id: null, el: grp };
+    return pid ? { kind: 'group', id: pid, el: grp, pos: 'into' } : { kind: 'root', id: null, el: grp, pos: 'into' };
   }
   const col = el.closest('#cols .col');
-  if (col) return { kind: 'root', id: null, el: col };
+  if (col) return { kind: 'root', id: null, el: col, pos: 'into' };
   return null;
 }
 
@@ -1480,6 +1627,30 @@ function moveNodeTo(id, parentId) {
   return true;
 }
 
+/* 同级重排：把 id 挪到 targetId 前面/后面（同一层；跨父则自动挂到目标的父下面） */
+function moveNodeRelativeTo(id, targetId, place) {
+  const n = nodeOf(id), t = nodeOf(targetId);
+  if (!n || !t || id === targetId) return false;
+  if (subtreeIds(id).includes(targetId)) return false;          /* 不能挪到自己的子孙旁边 */
+  const newParentId = t.parentId || null;
+  const oldParent = n.parentId ? nodeOf(n.parentId) : null;
+  const oldArr = n.parentId ? oldParent.children : S.doc.rootIds;
+  const oi = oldArr.indexOf(id);
+  if (oi < 0) return false;
+  oldArr.splice(oi, 1);
+  const newArr = newParentId ? nodeOf(newParentId).children : S.doc.rootIds;
+  const ti = newArr.indexOf(targetId);
+  if (ti < 0) { oldArr.splice(oi, 0, id); return false; }        /* 目标不在这层：还原 */
+  newArr.splice(place === 'before' ? ti : ti + 1, 0, id);
+  n.parentId = newParentId;
+  if (newParentId) nodeOf(newParentId).collapsed = false;
+  touch();
+  Undo.push(true);
+  S.sel = id;
+  scheduleSave();
+  return true;
+}
+
 function dragGhostFollow(x, y) {
   if (!Drag.ghost) return;
   Drag.ghost.style.left = Math.round(x + 16) + 'px';
@@ -1497,7 +1668,8 @@ function dragWipe() {
   dragDetach();
   document.body.classList.remove('dragmode');
   for (const el of Array.from(document.querySelectorAll('.node.drag-src'))) el.classList.remove('drag-src');
-  for (const el of Array.from(document.querySelectorAll('.drop-into'))) el.classList.remove('drop-into');
+  dragLineHide();
+  for (const el of Array.from(document.querySelectorAll('.drop-into,.drop-before,.drop-after'))) el.classList.remove('drop-into', 'drop-before', 'drop-after');
   if (Drag.ghost && Drag.ghost.parentNode) Drag.ghost.parentNode.removeChild(Drag.ghost);
   Drag.ghost = null; Drag.hit = null; Drag.id = null;
 }
@@ -1553,6 +1725,14 @@ function dragOnUp(e) {
   window.addEventListener('click', blockClick, { capture: true, once: true });
   setTimeout(() => window.removeEventListener('click', blockClick, true), 420);
   if (!hit) { toast('松手在空白处，已取消'); renderTree(); return; }
+  if (hit.kind === 'card' && (hit.pos === 'before' || hit.pos === 'after') && hit.id !== id) {
+    if (subtreeIds(id).includes(hit.id)) { toast('不能挪到自己的分枝里'); renderTree(); return; }
+    if (!moveNodeRelativeTo(id, hit.id, hit.pos)) { toast('还是原来那个位置'); renderTree(); return; }
+    S.centerColOnce = true;
+    renderTree();
+    toast('已移到「' + (nodeOf(hit.id).title || '未命名') + '」' + (hit.pos === 'before' ? '前面' : '后面') + ' · 同一层');
+    return;
+  }
   const targetParent = hit.kind === 'card' ? hit.id : (hit.kind === 'group' ? hit.id : null);
   if (targetParent && (targetParent === id || subtreeIds(id).includes(targetParent))) {
     toast('不能挂到自己的分枝下面');
@@ -1845,13 +2025,19 @@ function renderTrunkView() {
   if (!S.sel || !nodeOf(S.sel)) S.sel = roots[0].id;
   const chain = trunkChain();
 
+  /* 列数按整篇文档的最大层数算（不是只按选中的那条链），
+     否则选中一根没有分支的主干时，同级其他主干的分支列会整列消失。
+     列数上限 24 层，避免异常数据把界面撑爆。 */
+  const depthLimit = Math.min(24, Math.max(chain.length, maxNodeDepth()));
   const defs = [{ depth: 0, groups: columnGroups(0), activeItemId: chain[0] ? chain[0].id : null, activeParentId: null }];
-  for (let d = 0; d < chain.length; d++) {
+  for (let d = 0; d < depthLimit; d++) {
+    const cur = chain[d] || null;
+    const next = chain[d + 1] || null;
     defs.push({
       depth: d + 1,
       groups: columnGroups(d + 1),
-      activeItemId: chain[d + 1] ? chain[d + 1].id : null,
-      activeParentId: chain[d].id
+      activeItemId: next ? next.id : null,
+      activeParentId: cur ? cur.id : null
     });
   }
   /* 末尾连着空列就不画（叶子之后没有分支） */
@@ -2140,7 +2326,7 @@ function startEdit(id, field) {
   editStamp++;
   renderTree();
   const ta = $(`textarea.ta[data-id="${id}"][data-field="${S.edit.field}"]`);
-  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); }
 }
 
 function stopEdit() { S.edit = null; renderTree(); }
@@ -2169,10 +2355,11 @@ function addSibling(id, opts = {}) {
   Undo.push(true);
   if (S.focusId) { S.focusId = null; }
   S.sel = nn.id;
+  const smooth = S.viewMode === 'trunk';
+  if (smooth) S.centerColOnce = true;
   renderTree();
   startEdit(nn.id, 'title');
-  centerOn(nn.id);
-  centerNewNodeInTrunk(nn.id);
+  if (!smooth) centerOn(nn.id);
   scheduleSave();
   return nn;
 }
@@ -2184,10 +2371,11 @@ function addChild(id, opts = {}) {
   const nn = addNode(id, opts);
   Undo.push(true);
   S.sel = nn.id;
+  const smooth = S.viewMode === 'trunk';
+  if (smooth) S.centerColOnce = true;
   renderTree();
   startEdit(nn.id, 'title');
-  centerOn(nn.id);
-  centerNewNodeInTrunk(nn.id);
+  if (!smooth) centerOn(nn.id);
   scheduleSave();
   return nn;
 }
@@ -2363,7 +2551,7 @@ function enterFocus(id) {
   centerOn(id);
   setTimeout(() => {
     const ta = $(`textarea.ta[data-id="${id}"][data-field="content"]`);
-    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); }
   }, 30);
 }
 
@@ -2401,6 +2589,8 @@ function applyView() {
   if (S.viewMode === 'trunk') return;
   const st = $('#stage');
   st.style.transform = `translate(${S.view.x}px,${S.view.y}px) scale(${S.view.k})`;
+  /* 缩到 55% 以下：卡片只留标题，标题字号放大来抵消缩放 */
+  document.body.classList.toggle('canvas-tiny', S.view.k < 0.55);
   $('#zoomPill').textContent = Math.round(S.view.k * 100) + '%';
   updateMinimap();
   scheduleSaveViewState();   /* 缩放/平移也记下来，下次进来还是这个视口 */
@@ -2847,6 +3037,9 @@ function openSettings() {
     <div class="row"><label class="f">主干卡片宽</label><input type="range" id="stTrunkW" min="220" max="520" step="8" value="${settings.trunkCardW || 298}" style="width:150px;flex:0 0 auto"><span id="stTrunkWOut" style="font-size:12px;color:#8E847B"></span></div>
     <div class="row"><label class="f">主干字号</label><input type="range" id="stTrunkF" min="11" max="20" step="0.5" value="${settings.trunkFont || 13.5}" style="width:150px;flex:0 0 auto"><span id="stTrunkFOut" style="font-size:12px;color:#8E847B"></span></div>
     <div class="row"><label class="f">主干缩放</label><input type="range" id="stTrunkZ" min="60" max="180" step="5" value="${Math.round((settings.trunkZoom || 1) * 100)}" style="width:150px;flex:0 0 auto"><span id="stTrunkZOut" style="font-size:12px;color:#8E847B"></span></div>
+    <div class="row"><label class="f">默认大小</label>
+      <select id="stExpand" style="width:130px;flex:0 0 auto"><option value="80">80%</option><option value="90">90%</option><option value="100">100%（默认）</option><option value="110">110%</option><option value="120">120%</option><option value="130">130%</option><option value="150">150%</option></select>
+      <span style="font-size:12px;color:#A39A91">缩小成标题后，双击标题放大到的字号大小</span></div>
     <div class="row"><label class="f">自动保存</label>
       <select id="stAutosave" style="width:120px;flex:0 0 auto"><option value="0">关闭</option><option value="1">每 1 分钟</option><option value="2">每 2 分钟</option><option value="5">每 5 分钟</option><option value="10">每 10 分钟</option><option value="15">每 15 分钟</option><option value="30">每 30 分钟</option><option value="60">每 60 分钟</option></select>
       <button class="btn ghost" id="stSaveNow">立即保存</button>
@@ -2870,6 +3063,19 @@ function openSettings() {
     $('#stTrunkW').oninput = (e) => { settings.trunkCardW = +e.target.value; saveSettings(); applyTrunkStyle(); if (S.viewMode === 'trunk') renderTrunkView(); syncTrunkOut(); };
     $('#stTrunkF').oninput = (e) => { settings.trunkFont = +e.target.value; saveSettings(); applyTrunkStyle(); if (S.viewMode === 'trunk') renderTrunkView(); syncTrunkOut(); };
     $('#stTrunkZ').oninput = (e) => { settings.trunkZoom = (+e.target.value) / 100; saveSettings(); applyTrunkStyle(); if (S.viewMode === 'trunk') renderTrunkView(); syncTrunkOut(); };
+    {
+      const sel = $('#stExpand');
+      if (sel) {
+        sel.value = String(expandPct());
+        sel.onchange = (e) => {
+          settings.expandPct = clamp(Number(e.target.value) || 100, 60, 180);
+          saveSettings();
+          applyTrunkStyle();
+          if (S.viewMode === 'trunk') renderTrunkView();
+          toast('默认大小 ' + expandPct() + '%');
+        };
+      }
+    }
     syncTrunkOut();
   }
   { const sel = $('#stAutosave'); if (sel) sel.value = String(clamp(Number(settings.autosaveMin) || 0, 0, 120)); }
@@ -4792,8 +4998,12 @@ function setViewMode(mode, force) {
     $('#modeBadge').textContent = '地点';
   } else if (mode === 'trunk') {
     S.focusId = null;
+    S.expandId = null;
+    document.body.classList.remove('canvas-tiny');
+    applyTrunkStyle();
     renderTrunkView();
   } else {
+    document.body.classList.remove('cards-tiny');
     renderTree();
     applyView();
     setTimeout(updateMinimap, 30);
