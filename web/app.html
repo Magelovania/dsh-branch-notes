@@ -433,6 +433,22 @@ html[data-font="serif"] .ta.body-ta{font-family:Georgia,"Songti SC","STSong","Si
 .msg.ai .bubble{background:#fff;border:1px solid var(--line-2);padding:9px 11px;border-radius:10px}
 .msg .acts{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap}
 .msg .acts .link{font-size:11.5px}
+/* 顾问思考状态：小圆点脉冲 + 计时 + 长时间无数据提示 */
+.msg .bubble.thinking-bubble{display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:#8E847B;min-height:34px}
+.think-dots{display:inline-flex;gap:4px;align-items:center}
+.think-dots i{width:6px;height:6px;border-radius:50%;background:#BE8978;opacity:.3;animation:thinkPulse 1.2s ease-in-out infinite}
+.think-dots i:nth-child(2){animation-delay:.2s}
+.think-dots i:nth-child(3){animation-delay:.4s}
+@keyframes thinkPulse{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}
+.think-text{font-size:12.5px}
+.think-sec{font-size:11.5px;color:#A79C92;font-variant-numeric:tabular-nums}
+.think-hint{flex:0 0 100%;font-size:11.5px;line-height:1.6;color:#B08968}
+.msg .bubble .rsn{flex:0 0 100%;width:100%;margin-top:2px}
+.rsn-toggle{display:inline-flex;align-items:center;gap:4px;border:0;background:none;padding:2px 0;font:inherit;font-size:11.5px;color:#8E847B;cursor:pointer}
+.rsn-toggle:hover{color:#BE8978}
+.rsn-pre{margin:6px 0 2px;padding:8px 10px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:1.7;color:#6E655D;background:rgba(190,137,120,.055);border-left:2px solid rgba(190,137,120,.35);border-radius:0 8px 8px 0}
+.rsn-pre[hidden]{display:none}
+.bubble .ans{display:block}
 .msg .bubble :is(p,ul,ol,pre,blockquote,table){margin:.3em 0}
 .msg .bubble pre{background:var(--bg-2);padding:6px 8px;border-radius:6px;overflow:auto;font-size:12px}
 .msg .bubble code{background:var(--bg-2);padding:.08em .3em;border-radius:4px;font-size:.92em}
@@ -3508,18 +3524,113 @@ function loadChat() {
     if (!Array.isArray(list)) return [];
     return list
       .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-      .map(m => ({ role: m.role, content: m.content }));
+      .map(m => {
+        const item = { role: m.role, content: m.content };
+        if (typeof m.reasoning === 'string' && m.reasoning) item.reasoning = m.reasoning;
+        return item;
+      });
   } catch (e) { return []; }
 }
 
 function saveChatNow() {
   try {
-    const list = (S.chat || []).map(m => ({ role: m.role, content: String(m.content || '') }));
+    const list = (S.chat || []).map(m => {
+      const item = { role: m.role, content: String(m.content || '') };
+      if (m.reasoning) item.reasoning = String(m.reasoning).slice(0, 4000);   /* 思考过程只留前 4000 字，控制 localStorage 体积 */
+      return item;
+    });
     const trimmed = list.length > CHAT_MAX ? list.slice(list.length - CHAT_MAX) : list;
     const key = chatKey();
     if (!trimmed.length) localStorage.removeItem(key);
     else localStorage.setItem(key, JSON.stringify(trimmed));
   } catch (e) { /* 配额满了或隐私模式，静默失败，不影响主流程 */ }
+}
+
+/* ---------- 顾问思考状态 ---------- */
+function thinkMarkup() {
+  return '<span class="think-dots"><i></i><i></i><i></i></span>'
+    + '<span class="think-text">正在连接顾问…</span><span class="think-sec"></span>'
+    + '<div class="think-hint"></div>';
+}
+function thinkingBegin() {
+  S.thinkStart = Date.now();
+  S.thinkLastPing = S.thinkStart;
+  clearInterval(S.thinkTimer);
+  S.thinkTimer = setInterval(thinkingTick, 400);
+  thinkingTick();
+}
+function thinkingPing() { S.thinkLastPing = Date.now(); }
+function thinkingTick() {
+  const box = $('#msgs');
+  if (!box) return;
+  const el = box.querySelector('.msg.ai:last-child .bubble.thinking-bubble');
+  if (!el) return;
+  const now = Date.now();
+  const total = now - (S.thinkStart || now);
+  const quiet = now - (S.thinkLastPing || now);
+  const txt = el.querySelector('.think-text');
+  const sec = el.querySelector('.think-sec');
+  const hint = el.querySelector('.think-hint');
+  if (txt) txt.textContent = total < 1200 ? '正在连接顾问…' : '顾问正在思考…';
+  if (sec) sec.textContent = (total / 1000).toFixed(1) + 's';
+  if (hint) {
+    hint.textContent = quiet > 12000
+      ? '已经 ' + Math.round(quiet / 1000) + ' 秒没收到任何数据了 —— 可能正在排队、模型很慢，或连接已经断了。可以再等等，或点右下角「停止」后重发。'
+      : '';
+  }
+}
+function thinkingEnd() {
+  clearInterval(S.thinkTimer);
+  S.thinkTimer = 0;
+  S.thinkStart = 0;
+  S.thinkLastPing = 0;
+}
+
+/* ---------- 思考过程（reasoning，可展开） ---------- */
+function rsnText(m) { return String((m && m.reasoning) || ''); }
+function rsnCount(t) { return t.replace(/\s+/g, '').length; }
+function rsnLabel(m, open) {
+  return (open ? '\u25be ' : '\u25b8 ') + '思考过程（' + fmtTokens(rsnCount(rsnText(m))) + ' 字）';
+}
+function rsnMarkup(m) {
+  const t = rsnText(m);
+  if (!t) return '';
+  const open = !!(m && m.reasonOpen);
+  return '<div class="rsn">'
+    + '<button class="rsn-toggle" type="button">' + rsnLabel(m, open) + '</button>'
+    + '<pre class="rsn-pre"' + (open ? '' : ' hidden') + '>' + esc(t) + '</pre>'
+    + '</div>';
+}
+function rsnBind(bubble, m) {
+  if (!bubble || !m) return;
+  const btn = bubble.querySelector('.rsn-toggle');
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = '1';
+  btn.onclick = () => {
+    const pre = bubble.querySelector('.rsn-pre');
+    if (!pre) return;
+    const open = pre.hidden;
+    pre.hidden = !open;
+    m.reasonOpen = open;
+    btn.textContent = rsnLabel(m, open);
+    if (open) pre.scrollTop = pre.scrollHeight;
+  };
+}
+function rsnShowInto(bubble, m, streaming) {
+  let rsn = bubble.querySelector('.rsn');
+  if (!rsn) {
+    const host = document.createElement('div');
+    host.innerHTML = rsnMarkup(m);
+    rsn = host.firstElementChild;
+    if (!rsn) return null;
+    bubble.appendChild(rsn);
+    rsnBind(bubble, m);
+  }
+  const pre = rsn.querySelector('.rsn-pre');
+  const btn = rsn.querySelector('.rsn-toggle');
+  if (pre) { pre.textContent = rsnText(m); if (streaming && !pre.hidden) pre.scrollTop = pre.scrollHeight; }
+  if (btn) btn.textContent = rsnLabel(m, !!(m && m.reasonOpen));
+  return rsn;
 }
 
 function renderChat() {
@@ -3539,9 +3650,15 @@ function renderChat() {
     el.appendChild(who);
     const b = document.createElement('div');
     b.className = 'bubble';
+    const isPending = m.role === 'assistant' && !String(m.content || '') && S.streaming && m === S.chat[S.chat.length - 1];
     if (m.role === 'user') b.textContent = m.content;
-    else { b.innerHTML = mdToHtml(m.content); hydrateImages(b); }
+    else if (isPending) {
+      b.classList.add('thinking-bubble');
+      b.innerHTML = thinkMarkup() + rsnMarkup(m);
+      rsnBind(b, m);
+    } else { b.innerHTML = rsnMarkup(m) + '<div class="ans">' + mdToHtml(m.content) + '</div>'; hydrateImages(b); rsnBind(b, m); }
     el.appendChild(b);
+    if (isPending) { box.appendChild(el); continue; }
     if (m.role === 'assistant' && m.content) {
       const acts = document.createElement('div');
       acts.className = 'acts';
@@ -3556,12 +3673,13 @@ function renderChat() {
       acts.appendChild(b1); acts.appendChild(b2);
       if (!$('#onlyRead').checked) acts.appendChild(b3);
       el.appendChild(acts);
-      if (m.usage) {
+      if (m.usage || m.elapsedMs) {
         const meta = document.createElement('div');
         meta.className = 'meta';
-        meta.textContent = '本次 ≈ ' + fmtCny(m.usage.cny) + ' · 输入 ' + fmtTokens(m.usage.hit + m.usage.miss)
-          + '（命中 ' + fmtTokens(m.usage.hit) + '）· 输出 ' + fmtTokens(m.usage.out)
-          + ' · ' + (m.usage.offPeak ? '空闲时段' : '峰时段') + ' · ' + (m.usage.label || '');
+        meta.textContent = (m.elapsedMs ? '用时 ' + (m.elapsedMs / 1000).toFixed(1) + 's · ' : '')
+          + (m.usage ? '本次 ≈ ' + fmtCny(m.usage.cny) + ' · 输入 ' + fmtTokens(m.usage.hit + m.usage.miss)
+            + '（命中 ' + fmtTokens(m.usage.hit) + '）· 输出 ' + fmtTokens(m.usage.out)
+            + ' · ' + (m.usage.offPeak ? '空闲时段' : '峰时段') + ' · ' + (m.usage.label || '') : '');
         el.appendChild(meta);
       }
     }
@@ -3579,7 +3697,7 @@ function toggleDrawer(force) {
   if (open) { updateCtxBar(); renderChat(); renderCostBar(); setTimeout(() => $('#aiInput').focus(), 60); }
 }
 
-async function aiChat(messages, onDelta, onUsage) {
+async function aiChat(messages, onDelta, onUsage, onPing, onReasoning) {
   const ctrl = new AbortController();
   S.abort = ctrl;
   const r = await fetch(AI_BASE + '/chat', {
@@ -3591,7 +3709,7 @@ async function aiChat(messages, onDelta, onUsage) {
   if (!r.ok) throw new Error('HTTP ' + r.status + '：' + (await r.text()).slice(0, 200));
   const reader = r.body.getReader();
   const dec = new TextDecoder();
-  let buf = '', full = '', finished = false, usage = null;
+  let buf = '', full = '', reasoning = '', finished = false, usage = null, meta = null;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -3606,14 +3724,19 @@ async function aiChat(messages, onDelta, onUsage) {
       if (d === '[DONE]') { buf = ''; finished = true; break; }
       let j = null;
       try { j = JSON.parse(d); } catch (e) { continue; } // 忽略半包
+      if (onPing) { try { onPing(); } catch (e) {} }   /* 任何一帧都算「链路还活着」 */
       if (j.usage) { usage = j.usage; if (onUsage) { try { onUsage(j.usage); } catch (e) {} } }
+      if (j.branchNotes && j.branchNotes.reasoning && onPing) onPing('reasoning');
+      if (j.branchNotes && Number.isFinite(j.branchNotes.elapsedMs)) { meta = j.branchNotes; }
       if (j.error) throw new Error((j.error && j.error.message) || '模型调用失败');
       const ch = j.choices?.[0]?.delta || {};
+      const rt = ch.reasoning_content || '';
+      if (rt) { reasoning += rt; if (onReasoning) { try { onReasoning(rt, reasoning); } catch (e) {} } }
       const t = ch.content || '';
       if (t) { full += t; onDelta(t, full); }
     }
   }
-  return { text: full, usage };
+  return { text: full, usage, meta, reasoning };
 }
 
 async function sendChat(presetText) {
@@ -3644,29 +3767,49 @@ async function sendChat(presetText) {
   S.streaming = true;
   $('#btnSend').textContent = '停止';
   const box = $('#msgs');
+  const startedAt = Date.now();
+  thinkingBegin();               /* 空气泡变成「顾问正在思考 + 计时」，不再是一块白板 */
+  renderChat();                  /* 让空气泡立刻变成思考态（renderChat 里才知道 streaming） */
   try {
     await aiChat(messages, (delta, full) => {
       reply.content = full;
       const last = box.lastElementChild;
       if (last) {
         const b = last.querySelector('.bubble');
-        if (b) { b.innerHTML = mdToHtml(full); hydrateImages(b); }
+        if (b) {
+          if (b.classList.contains('thinking-bubble')) b.classList.remove('thinking-bubble');
+          let ans = b.querySelector('.ans');
+          if (!ans) { ans = document.createElement('div'); ans.className = 'ans'; b.appendChild(ans); }
+          ans.innerHTML = mdToHtml(full); hydrateImages(ans);
+        }
       }
       box.scrollTop = box.scrollHeight;
     }, (u) => {
       charged = recordUsage(u, pick.provider, pick.model, 'chat');
       if (charged) reply.usage = { hit: charged.hit, miss: charged.miss, out: charged.out, cny: charged.cny, offPeak: charged.offPeak, label: charged.label };
+    }, () => thinkingPing(), (delta, all) => {
+      reply.reasoning = all;
+      const last = box.lastElementChild;
+      const b = last && last.querySelector('.bubble');
+      if (b) {
+        rsnShowInto(b, reply, true);
+        box.scrollTop = box.scrollHeight;
+      }
     });
+    reply.elapsedMs = Date.now() - startedAt;
     renderChat();
   } catch (e) {
-    if (e.name === 'AbortError') { toast('已停止'); }
-    else {
-      reply.content = reply.content || '';
+    thinkingEnd();
+    if (e.name === 'AbortError') {
+      toast('已停止');
+      reply.content = reply.content || '（已停止，没有收到内容）';
+    } else {
+      reply.content = (reply.content ? reply.content + '\n\n' : '') + '⚠️ 请求失败：' + e.message + '\n（连接可能已断开，点「发送」重试）';
       toast('请求失败：' + e.message, 4200);
-      S.chat.push({ role: 'assistant', content: '⚠️ 请求失败：' + e.message });
     }
     renderChat();
   } finally {
+    thinkingEnd();
     saveChatNow();   /* 流式结束（成功/失败/中断）都落盘一遍 */
     S.streaming = false;
     S.abort = null;
